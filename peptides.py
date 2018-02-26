@@ -78,38 +78,56 @@ elif cutoff_type == 'rank':
 output_prefix = species + '_' + mhc_type + '_' + '_'.join([str(x) for x in lengths]) + '_' + os.path.split(fasta_location)[1]
 print('output prefix: ' + output_prefix)
 
-r = re.compile("-{4,}\n(?P<header>.+)\n-{4,}\n(?P<results>(?:(?:.+\n))+)-{4,}")
+r = re.compile('pos\s+HLA\s+peptide\s+Core\s+Offset\s+I_pos\s+I_len\s+D_pos\s+D_len\s+iCore\s+Identity\s+1\-log50k\(aff\)\s+Affinity\(nM\)\s+%Rank\s+BindLevel')
 rows = []
 netmhc_output_file = open(output_prefix + '.tsv', 'w')
 print('going to run netMHC')
 completed_netmhc = subprocess.run(["netmhc", "-a", mhc_type, "-l", ','.join([str(x) for x in lengths]), '-f ' + fasta_location], stdout = netmhc_output_file)
 print('netmhc output  can be found here: ' + output_prefix + '.tsv')
 netmhc_output_file.close()
-netmhc_output = open(output_prefix + '.tsv', 'r').read()
+netmhc_output = open(output_prefix + '.tsv', 'r')
 
-print('\n'.join(netmhc_output.split('\n')[0:20]))
-
-for header, results in r.findall(netmhc_output):
-    hla_column = 1
-    peptide_column = 2
-    affinity_column = 11
-    rank_column = 12
-    for line in results.split('\n'):
-        if len(line) > 5:
-            line_sections = re.split('\s{2,}', line)[1::]
-            row = [line_sections[peptide_column], line_sections[hla_column], re.search('\d*\.\d*', line_sections[affinity_column]).group(0), re.search('\d*\.\d*', line_sections[rank_column]).group(0)]
-            if cutoff_type == 'affinity' and float(row[2]) <= cutoff_value:
-                rows.append(row)
-            elif cutoff_type == 'rank' and float(row[3]) <= cutoff_value:
-                rows.append(row)
+results = False
+last_line_was_header = False
+last_line_was_seperator = False
+hla_column = 1
+peptide_column = 2
+affinity_column = 12
+rank_column = 13
 
 row_file = open(output_prefix + '_rows.txt', 'w')
 peptide_file = open(output_prefix + '_peptides.fasta', 'w')
 i = 1
-for row in rows:
-    row_file.write(', '.join(row) + '\n')
-    peptide_file.write('> {0}\n'.format(i))
-    peptide_file.write(row[0] + '\n')
-    i += 1
+for line in netmhc_output:
+    if results:
+        if line.startswith('-------'):
+            results = False
+            last_line_was_seperator = True
+        else:
+            if len(line) > 5:
+                line_sections = re.split('\s{2,}', line)[1::]
+                row = [line_sections[peptide_column], line_sections[hla_column], re.search('\d*\.\d*', line_sections[affinity_column]).group(0), re.search('\d*\.\d*', line_sections[rank_column]).group(0)]
+                if cutoff_type == 'affinity' and float(row[2]) <= cutoff_value:
+                    row_file.write(', '.join(row) + '\n')
+                    peptide_file.write('> {0}\n'.format(i))
+                    peptide_file.write(row[0] + '\n')
+                    i += 1
+                elif cutoff_type == 'rank' and float(row[3]) <= cutoff_value:
+                    assert(float(row[3]) <= 100.0)
+                    row_file.write(', '.join(row) + '\n')
+                    peptide_file.write('> {0}\n'.format(i))
+                    peptide_file.write(row[0] + '\n')
+                    i += 1
+    elif line.startswith('----------'):
+        if last_line_was_header:
+            results = True
+            last_line_was_header = False
+        else:
+            last_line_was_seperator = True
+    elif last_line_was_seperator and r.search(line):
+        last_line_was_seperator = False
+        last_line_was_header = True
+    #otherwise, don't need to do anything. It's not an important line.
+
 row_file.close()
 peptide_file.close()
